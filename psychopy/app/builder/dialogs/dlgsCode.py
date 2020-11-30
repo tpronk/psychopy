@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Part of the PsychoPy library
-# Copyright (C) 2002-2018 Jonathan Peirce (C) 2019 Open Science Tools Ltd.
+# Copyright (C) 2002-2018 Jonathan Peirce (C) 2019-2020 Open Science Tools Ltd.
 # Distributed under the terms of the GNU General Public License (GPL).
 
 """Dialog classes for the Builder Code component
@@ -40,7 +40,7 @@ class DlgCodeComponentProperties(wx.Dialog):
     def __init__(self, frame, title, params, order,
                  helpUrl=None, suppressTitles=True, size=(800,400),
                  style=_style, editing=False, depends=[],
-                 timeout=None):
+                 timeout=None, type="Code"):
 
         # translate title
         localizedTitle = title.replace(' Properties',
@@ -531,7 +531,7 @@ class CodeBox(BaseCodeEditor, ThemeMixin):
         else:
             color = (255, 255, 255, 255)
         self.StyleSetBackground(wx.stc.STC_STYLE_DEFAULT, color)
-        self.setupStyles()  # then reset fonts again on top of that color
+        self._applyAppTheme()
 
     def OnMarginClick(self, evt):
         # fold and unfold as needed

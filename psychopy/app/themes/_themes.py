@@ -15,10 +15,12 @@ from psychopy import logging
 import psychopy
 from ...experiment import components
 import json
-from matplotlib import font_manager
+
+if sys.platform=='win32':
+    from matplotlib import font_manager
+    fm = font_manager.FontManager()
 
 thisFolder = Path(__file__).parent
-fm = font_manager.FontManager()
 iconsPath = Path(prefs.paths['resources'])
 
 try:
@@ -63,6 +65,7 @@ class ThemeMixin:
         stc.STC_LEX_PYTHON: "python",
         stc.STC_LEX_CPP: "c++",
         stc.STC_LEX_R: "R"
+        #stc.STC_LEX_JSON: "json"
     }
     # these are populated and modified by PsychoPyApp.theme.setter
     spec = None
@@ -123,17 +126,10 @@ class ThemeMixin:
         # Define subfunctions to handle different object types
         def applyToToolbar(target):
             target.SetBackgroundColour(ThemeMixin.appColors['frame_bg'])
-            if sys.platform == 'win32':
-                # on mac ClearTools seg faults. Not sure what happens on linux
-                # Clear tools
-                target.ClearTools()
-                # Redraw tools
-                target.makeTools()
-            else:
-                # otherwise make the tools the first time but not again
-                if hasattr(target, '_needMakeTools') and target._needMakeTools:
-                    target.makeTools()
-                    self._needMakeTools = False
+            # Clear tools
+            target.ClearTools()
+            # Redraw tools
+            target.makeTools()
 
         def applyToStatusBar(target):
             target.SetBackgroundColour(cLib['white'])
@@ -144,6 +140,11 @@ class ThemeMixin:
             if hasattr(target, 'GetAuiManager'):
                 target.GetAuiManager().SetArtProvider(PsychopyDockArt())
                 target.GetAuiManager().Update()
+            for menu in target.GetMenuBar().GetMenus():
+                for submenu in menu[0].MenuItems:
+                    if isinstance(submenu.SubMenu, ThemeSwitcher):
+                        submenu.SubMenu._applyAppTheme()
+
 
         def applyToPanel(target):
             target.SetBackgroundColour(ThemeMixin.appColors['panel_bg'])
@@ -169,6 +170,9 @@ class ThemeMixin:
         def applyToCodeEditor(target):
             spec = ThemeMixin.codeColors.copy()
             base = spec['base']
+            # Set margin size according to text size
+            if not isinstance(target, wx.py.shell.Shell):
+                target.SetMarginWidth(0, 4 * prefs.coder['codeFontSize'])
             # Override base font with user spec if present
             prefkey = 'outputFont' if isinstance(target, wx.py.shell.Shell) else 'codeFont'
             if prefs.coder[prefkey].lower() != "From Theme...".lower():
@@ -362,10 +366,11 @@ class ThemeMixin:
             0: ['typedef', 'if', 'else', 'return', 'struct', 'for', 'while', 'do',
                 'using', 'namespace', 'union', 'break', 'enum', 'new', 'case',
                 'switch', 'continue', 'volatile', 'finally', 'throw', 'try',
-                'delete', 'typeof', 'sizeof', 'class', 'volatile'],
-            1: ['int', 'float', 'double', 'char', 'short', 'byte', 'void', 'const',
+                'delete', 'typeof', 'sizeof', 'class', 'volatile', 'int',
+                'float', 'double', 'char', 'short', 'byte', 'void', 'const',
                 'unsigned', 'signed', 'NULL', 'true', 'false', 'bool', 'size_t',
-                'long', 'long long']
+                'long', 'long long'],
+            1: []
         }
         if self.GetLexer() == stc.STC_LEX_PYTHON:
             # Python
@@ -380,17 +385,42 @@ class ThemeMixin:
                  'break', 'local', 'global'],
                 0: ['NA']
             }
-        elif self.GetLexer == stc.STC_LEX_CPP:
+        elif self.GetLexer() == stc.STC_LEX_CPP:
             # C/C++
-            keywords = baseC
+            keywords = baseC.copy()
             if hasattr(self, 'filename'):
                 if self.filename.endswith('.js'):
                     # JavaScript
                     keywords = {
-                        0: ['var', 'let', 'import', 'function', 'if', 'else', 'return', 'struct', 'for', 'while', 'do',
-                            'finally', 'throw', 'try', 'switch', 'case', 'break'],
+                        0: ['var', 'const', 'let', 'import', 'function', 'if',
+                            'else', 'return', 'struct', 'for', 'while', 'do',
+                            'finally', 'throw', 'try', 'switch', 'case',
+                            'break'],
                         1: ['null', 'false', 'true']
                     }
+                elif any([self.filename.lower().endswith(ext) for ext in (
+                        '.glsl', '.vert', '.frag')]):
+                    # keywords
+                    keywords[0] += [
+                        'invariant', 'precision', 'highp', 'mediump', 'lowp',
+                        'coherent', 'sampler', 'sampler2D', 'layout', 'out',
+                        'in', 'varying', 'uniform', 'attribute']
+                    # types
+                    keywords[0] += [
+                        'vec2', 'vec3', 'vec4', 'mat2', 'mat3', 'mat4',
+                        'ivec2', 'ivec3', 'ivec4', 'imat2', 'imat3', 'imat4',
+                        'bvec2', 'bvec3', 'bvec4', 'bmat2', 'bmat3', 'bmat4',
+                        'dvec2', 'dvec3', 'dvec4', 'dmat2', 'dmat3', 'dmat4']
+                    # reserved
+                    keywords[1] += [
+                        'gl_Position', 'gl_LightSourceParameters',
+                        'gl_MaterialParameters', 'gl_LightModelProducts',
+                        'gl_FrontLightProduct', 'gl_BackLightProduct',
+                        'gl_FrontMaterial', 'gl_BackMaterial', 'gl_FragColor',
+                        'gl_ModelViewMatrix', 'gl_ModelViewProjectionMatrix',
+                        'gl_Vertex', 'gl_NormalMatrix', 'gl_Normal',
+                        'gl_ProjectionMatrix', 'gl_LightSource']
+
         # elif self.GetLexer() == stc.STC_LEX_ARDUINO:
         #     # Arduino
         #     keywords = {
@@ -485,8 +515,28 @@ class ThemeMixin:
                 "commenterror": stc.STC_C_COMMENTDOCKEYWORDERROR,
                 "documentation": stc.STC_C_COMMENTLINEDOC,
                 "documentation2": stc.STC_C_COMMENTDOC,
-                "whitespace": stc.STC_C_DEFAULT
+                "whitespace": stc.STC_C_DEFAULT,
+                "preprocessor": stc.STC_C_PREPROCESSOR,
+                "preprocessorcomment": stc.STC_C_PREPROCESSORCOMMENT
             })
+        # elif self.GetLexer() == stc.STC_LEX_JSON:
+        #     # JSON
+        #     tags.update({
+        #         "operator": stc.STC_JSON_OPERATOR,
+        #         "keyword": stc.STC_JSON_KEYWORD,
+        #         "uri": stc.STC_JSON_URI,
+        #         "compactiri": stc.STC_JSON_COMPACTIRI,
+        #         "error": stc.STC_JSON_ERROR,
+        #         "espacesequence": stc.STC_JSON_ESCAPESEQUENCE,
+        #         "propertyname": stc.STC_JSON_PROPERTYNAME,
+        #         "ldkeyword": stc.STC_JSON_LDKEYWORD,
+        #         "num": stc.STC_JSON_NUMBER,
+        #         "str": stc.STC_JSON_STRING,
+        #         "openstr": stc.STC_JSON_STRINGEOL,
+        #         "comment": stc.STC_JSON_LINECOMMENT,
+        #         "commentblock": stc.STC_JSON_BLOCKCOMMENT,
+        #         "whitespace": stc.STC_JSON_DEFAULT
+        #     })
         return tags
 
     def hex2rgb(self, hex, base=(0, 0, 0, 255)):
@@ -552,10 +602,11 @@ class ThemeMixin:
         else:
             finalFont = [wx.SystemSettings.GetFont(wx.SYS_ANSI_FIXED_FONT).GetFaceName()]
         # Cycle through font names, stop at first valid font
-        for font in fontList:
-            if fm.findfont(font) not in fm.defaultFont.values():
-                finalFont = [font] + bold + italic
-                break
+        if sys.platform == 'win32':
+            for font in fontList:
+                if fm.findfont(font) not in fm.defaultFont.values():
+                    finalFont = [font] + bold + italic
+                    break
 
         return ','.join(finalFont)
 
@@ -990,23 +1041,29 @@ class ThemeSwitcher(wx.Menu):
         for theme in priority:
             tooltip = themeList.pop(theme)
             item = self.AppendRadioItem(wx.ID_ANY, _translate(theme), tooltip)
+            # Bind to theme change method
             frame.Bind(wx.EVT_MENU, frame.app.onThemeChange, item)
-            if item.ItemLabel.lower() == ThemeMixin.codetheme.lower():
-                item.Check(True)
-            else:
-                item.Check(False)
         # Make other theme buttons
         for theme in themeList:
             item = self.AppendRadioItem(wx.ID_ANY, _translate(theme), help=themeList[theme])
             frame.Bind(wx.EVT_MENU, frame.app.onThemeChange, item)
-            if item.ItemLabel.lower() == ThemeMixin.codetheme.lower():
-                item.Check(True)
-            else:
-                item.Check(False)
         self.AppendSeparator()
         # Add Theme Folder button
         item = self.Append(wx.ID_ANY, _translate("Open theme folder"))
         frame.Bind(wx.EVT_MENU, self.openThemeFolder, item)
 
     def openThemeFolder(self, event):
-        subprocess.call("explorer %(themes)s" % prefs.paths, shell=True)
+        # Choose a command according to OS
+        if sys.platform in ['win32']:
+            comm = "explorer"
+        elif sys.platform in ['darwin']:
+            comm = "open"
+        elif sys.platform in ['linux', 'linux2']:
+            comm = "dolphin"
+        # Use command to open themes folder
+        subprocess.call(f"{comm} {prefs.paths['themes']}", shell=True)
+
+    def _applyAppTheme(self):
+        for item in self.GetMenuItems():
+            if item.IsRadio():  # This means it will not attempt to check the separator
+                item.Check(item.ItemLabel.lower() == ThemeMixin.codetheme.lower())

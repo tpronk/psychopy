@@ -17,7 +17,7 @@ some more added:
 
 """
 import numpy as np
-import OpenGL.GL as gl
+from pyglet import gl  # import OpenGL.GL not compatible with Big Sur (2020)
 
 from ..basevisual import BaseVisualStim, ColorMixin, ContainerMixin
 from psychopy.tools.attributetools import attributeSetter, setAttribute
@@ -70,8 +70,9 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
     def __init__(self, win, text, font,
                  pos=(0, 0), units=None, letterHeight=None,
                  size=None,
-                 color=(1.0, 1.0, 1.0),
-                 colorSpace='rgb',
+                 color=(1.0, 1.0, 1.0), colorSpace='rgb',
+                 fillColor=None, fillColorSpace=None,
+                 borderWidth=2, borderColor=None, borderColorSpace=None,
                  contrast=1,
                  opacity=1.0,
                  bold=False,
@@ -80,9 +81,6 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
                  padding=None,  # gap between box and text
                  anchor='center',
                  alignment='left',
-                 fillColor=None,
-                 borderWidth=2,
-                 borderColor=None,
                  flipHoriz=False,
                  flipVert=False,
                  editable=False,
@@ -131,12 +129,14 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
         self.opacity = opacity
         self.onTextCallback = onTextCallback
 
+        if units=='norm':
+            raise NotImplemented("TextBox2 doesn't support 'norm' units at the "
+                                 "moment. Use 'height' units instead")
         # first set params needed to create font (letter sizes etc)
         if letterHeight is None:
             self.letterHeight = defaultLetterHeight[self.units]
         else:
             self.letterHeight = letterHeight
-
         # self._pixLetterHeight helps get font size right but not final layout
         if 'deg' in self.units:  # treat deg, degFlat or degFlatPos the same
             scaleUnits = 'deg'  # scale units are just for font resolution
@@ -144,6 +144,9 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
             scaleUnits = self.units
         self._pixLetterHeight = convertToPix(
                 self.letterHeight, pos=0, units=scaleUnits, win=self.win)
+        if isinstance(self._pixLetterHeight, np.ndarray):
+            # If pixLetterHeight is an array, take the Height value
+            self._pixLetterHeight = self._pixLetterHeight[1]
         self._pixelScaling = self._pixLetterHeight / self.letterHeight
         if size is None:
             size = [defaultBoxWidth[self.units], None]
@@ -152,7 +155,7 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
         self.italic = italic
         self.lineSpacing = lineSpacing
         if padding is None:
-            padding = letterHeight / 2.0
+            padding = self.letterHeight / 2.0
         self.padding = padding
         self.glFont = None  # will be set by the self.font attribute setter
         self.font = font
@@ -192,38 +195,39 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
                 units=self.units,
                 lineWidth=borderWidth, lineColor=borderColor,
                 fillColor=fillColor, opacity=self.opacity,
-                autoLog=False)
+                autoLog=False, fillColorSpace=self.colorSpace)
         # also bounding box (not normally drawn but gives tight box around chrs)
         self.boundingBox = Rect(
                 win, pos=self.pos,
                 units=self.units,
-                lineWidth=1, lineColor=None, fillColor='white', opacity=0.1,
+                lineWidth=1, lineColor=None, fillColor=fillColor, opacity=0.1,
                 autoLog=False)
-        self._pallette = {
-            False: { # If no focus
+        self.pallette = { # If no focus
                 'lineColor': borderColor,
-                'lineRGB': self.box.lineRGB,
                 'lineWidth': borderWidth,
                 'fillColor': fillColor,
-                'fillRGB': self.box.fillRGB
-            }
         }
-        self.palletteShift()
         # then layout the text (setting text triggers _layout())
-        self.text = text
+        self.startText = text
+        self.text = text if text is not None else ""
 
         # caret
         self.editable = editable
         self.caret = Caret(self, color=self.color, width=5)
         self._hasFocus = False
-        if editable:  # may yet gain focus if the first editable obj
-            self.win.addEditable(self)
 
         self.autoLog = autoLog
 
     @property
     def pallette(self):
         return self._pallette[self.hasFocus]
+
+    @pallette.setter
+    def pallette(self, value):
+        self._pallette = {
+            False: value,
+            True: value
+        }
 
     @attributeSetter
     def font(self, fontName, italic=False, bold=False):
@@ -468,15 +472,24 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
     def _getStartingVertices(self):
         """Returns vertices for a single non-printing char as a proxy
         (needed to get location for caret when there are no actual chars)"""
-        glyph = self.glFont["A"]  # just to get height
-        yTop = 0
-        yBot = yTop - glyph.size[1]
+        yTop = self._anchorOffsetY - (self.glFont.height - self.glFont.ascender) * self.lineSpacing
+        yBot = yTop - self._lineHeight
         x = 0
         theseVertices = np.array([[x, yTop], [x, yBot], [x, yBot], [x, yTop]])
         return theseVertices
 
     def draw(self):
         """Draw the text to the back buffer"""
+        # Border width
+        self.box.setLineWidth(self.pallette['lineWidth']) # Use 1 as base if border width is none
+        #self.borderWidth = self.box.lineWidth
+        # Border colour
+        self.box.setLineColor(self.pallette['lineColor'], colorSpace='rgb')
+        #self.borderColor = self.box.lineColor
+        # Background
+        self.box.setFillColor(self.pallette['fillColor'], colorSpace='rgb')
+        #self.fillColor = self.box.fillColor
+
         if self._needVertexUpdate:
             self._updateVertices()
         if self.fillColor is not None or self.borderColor is not None:
@@ -496,16 +509,16 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
         gl.glEnableClientState(gl.GL_TEXTURE_COORD_ARRAY)
         gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
 
-        gl.glVertexPointer(2, gl.GL_FLOAT, 0, self.verticesPix)
-        gl.glColorPointer(4, gl.GL_FLOAT, 0, self._colors)
-        gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, self._texcoords)
+        gl.glVertexPointer(2, gl.GL_FLOAT, 0, self.verticesPix.ctypes)
+        gl.glColorPointer(4, gl.GL_FLOAT, 0, self._colors.ctypes)
+        gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, self._texcoords.ctypes)
 
         self.shader.bind()
         self.shader.setInt('texture', 0)
         self.shader.setFloat('pixel', [1.0 / 512, 1.0 / 512])
         nVerts = len(self.text)*4
         gl.glDrawElements(gl.GL_QUADS, nVerts,
-                          gl.GL_UNSIGNED_INT, list(range(nVerts)))
+                          gl.GL_UNSIGNED_INT, np.arange(nVerts, dtype=int).ctypes)
         self.shader.unbind()
 
         # removed the colors and font texture
@@ -522,6 +535,11 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
             self.caret.draw()
 
         gl.glPopMatrix()
+
+    def reset(self):
+        # Reset contents
+        self.text = self.startText
+
 
     def contains(self, x, y=None, units=None, tight=False):
         """Returns True if a point x,y is inside the stimulus' border.
@@ -703,42 +721,12 @@ class TextBox2(BaseVisualStim, ContainerMixin, ColorMixin):
     def hasFocus(self, state):
         # Store focus
         self._hasFocus = state
-        # Border width
-        self.box.setLineWidth(self.pallette['lineWidth']) # Use 1 as base if border width is none
-        self.borderWidth = self.box.lineWidth
-        # Border colour
-        self.box.setLineColor(self.pallette['lineColor'], colorSpace='rgb')
-        self.borderColor = self.box.lineColor
-        # Background
-        self.box.setLineColor(self.pallette['fillColor'], colorSpace='rgb')
-        self.fillColor = self.box.fillColor
         # Redraw text box
         self.draw()
 
     def getText(self):
         """Returns the current text in the box"""
         return self.text
-
-    def palletteShift(self):
-        pal = self._pallette[False].copy()
-        # Double border width
-        if pal['lineWidth']:
-            pal['lineWidth'] = max(pal['lineWidth'], 5) * 2
-        else:
-            pal['lineWidth'] = 5 * 2
-        # Darken border
-        if pal['lineColor']:
-            pal['lineColor'] = [max(c - 0.05, 0.05) for c in pal['lineRGB']]
-        else:
-            # Use window colour as base if border colour is none
-            pal['lineColor'] = [max(c - 0.05, 0.05) for c in self.win.color]
-        # Lighten background
-        if pal['fillColor']:
-            pal['fillColor'] = [min(c + 0.05, 0.95) for c in pal['fillRGB']]
-        else:
-            # Use window colour as base if fill colour is none
-            pal['fillColor'] = [min(c + 0.05, 0.95) for c in self.win.color]
-        self._pallette[True] = pal
 
     @attributeSetter
     def pos(self, value):
@@ -812,21 +800,23 @@ class Caret(ColorMixin):
             Caret colour
     """
 
-    def __init__(self, textbox, color, width):
+    def __init__(self, textbox, color, width, colorSpace='rgb'):
         self.textbox = textbox
         self.index = len(textbox.text)  # start off at the end
         self.autoLog = False
         self.width = width
         self.units = textbox.units
+        self.colorSpace = colorSpace
         self.color = color
 
     @attributeSetter
     def color(self, color):
-        ColorMixin.setColor(self, color)
-        if self.colorSpace not in ['rgb', 'dkl', 'lms', 'hsv']:
-            self._desiredRGB = self.rgb / 127.5 - 1
-        else:
-            self._desiredRGB = self.rgb
+        self.setColor(color)
+        self._desiredRGB = [0.89, -0.35, -0.28]
+        # if self.colorSpace not in ['rgb', 'dkl', 'lms', 'hsv']:
+        #     self._desiredRGB = [c / 127.5 - 1 for c in self.rgb]
+        # else:
+        #     self._desiredRGB = self.rgb
 
     def draw(self):
         if not self.visible:
@@ -932,9 +922,9 @@ class Caret(ColorMixin):
         # lastChar = [bottLeft, topLeft, **bottRight**, **topRight**]
         ii = self.index
         if textbox.vertices.shape[0] == 0:
-            verts = self.textbox._getStartingVertices()
-            verts[:,1] = verts[:,1] / float(textbox._pixelScaling)
-            verts[:,1] = verts[:,1] + float(textbox._anchorOffsetY)
+            verts = textbox._getStartingVertices() / textbox._pixelScaling
+            verts[:,1] = verts[:,1]
+            verts[:,0] = verts[:,0] + float(textbox._anchorOffsetX)
         else:
             if self.index >= len(textbox._lineNs):  # caret is after last chr
                 chrVerts = textbox.vertices[range((ii-1) * 4, (ii-1) * 4 + 4)]

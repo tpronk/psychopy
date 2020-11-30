@@ -6,6 +6,9 @@ import traceback
 import yaml
 import os
 import sys
+import codecs
+
+from psychopy.localization import _translate
 
 
 """
@@ -50,7 +53,7 @@ class AlertCatalog(object):
         for filePath in self.alertFiles:
             # '{}'.format(filePath) instead of simple open(filePath,'r')
             # is needed for Py2 support only
-            with open('{}'.format(filePath), 'r') as ymlFile:
+            with codecs.open('{}'.format(filePath), 'r', 'utf-8') as ymlFile:
                 entry = yaml.load(ymlFile, Loader=yaml.SafeLoader)
                 if entry is None:
                     continue  # this might be a stub for future entry
@@ -115,9 +118,9 @@ class AlertEntry(object):
             self.name = None
 
         if strFields:
-            self.msg = catalog.alert[code]['msg'].format(**strFields)
+            self.msg = _translate(catalog.alert[code]['msg']).format(**strFields)
         else:
-            self.msg = catalog.alert[code]['msg']
+            self.msg = _translate(catalog.alert[code]['msg'])
 
         if trace:
             self.trace = ''.join(traceback.format_exception(
